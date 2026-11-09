@@ -458,16 +458,25 @@ export function tickSim(
   }
 }
 
+/** Near the 74°C safety line. Time floors stay as a second AND. */
+const ADVANCE_CORE_C = 72;
+
+function roastCoreReady(sim: Sim): boolean {
+  if (sim.wings.length === 0) return false;
+  const avg = sim.wings.reduce((s, w) => s + w.coreTemp, 0) / sim.wings.length;
+  return avg >= ADVANCE_CORE_C;
+}
+
 export function canAdvance(sim: Sim): boolean {
   switch (sim.phase) {
     case "skewer":
       return sim.wings.length > 0 && sim.wings.every((w) => w.onFork);
     case "roast1":
-      return sim.timeInPhase > COOK.roast1Floor;
+      return sim.timeInPhase > COOK.roast1Floor && roastCoreReady(sim);
     case "honey":
       return sim.wings.some((w) => w.honey > 0.12);
     case "roast2":
-      return sim.timeInPhase > COOK.roast2Floor;
+      return sim.timeInPhase > COOK.roast2Floor && roastCoreReady(sim);
     case "plate":
       return sim.wings.some((w) => w.onPlate);
     case "extract":

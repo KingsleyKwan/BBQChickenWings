@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>雞中翼 drawn preview</title>
+    <style>
+      html, body { margin: 0; background: #120e0c; overflow: hidden; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <script type="module">
+      window.addEventListener("error", (e) => { window.__wingErr = e.message; document.title = "err:" + e.message; });
+      window.addEventListener("unhandledrejection", (e) => { window.__wingErr = String(e.reason); document.title = "err:" + e.reason; });
+
+      import * as THREE from "/node_modules/three/build/three.module.js";
+      import { assembleMidWing, paintMidWing, invalidateMidWingGeoCache } from "/src/game/scene/wing.ts";
+
+      invalidateMidWingGeoCache();
+      const params = new URLSearchParams(location.search);
+      const view = params.get("view") || "raw";
+      const canvas = document.getElementById("c");
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+      renderer.setPixelRatio(1);
+      renderer.setSize(900, 900, false);
+      canvas.style.width = "900px";
+      canvas.style.height = "900px";
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x14100e);
+      const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 20);
+
+      scene.add(new THREE.HemisphereLight(0xffe8d2, 0x2a1810, 0.95));
+      const key = new THREE.DirectionalLight(0xfff0e0, 1.6);
+      key.position.set(0.5, 1.0, 0.8);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0xc8d8ff, 0.45);
+      fill.position.set(-0.7, 0.25, 0.4);
+      scene.add(fill);
+
+      const wing = assembleMidWing({ uniqueGeo: true });
+      wing.scale.setScalar(1.15);
+      scene.add(wing);
+
+      const meat = wing.getObjectByName("meat");
+      if (meat && meat.isMesh) paintMidWing(meat, 0, 0, 0, 0, 0);
+
+      // Wait a beat for TextureLoader of 04/05
+      await new Promise((r) => setTimeout(r, 400));
+
+      if (view === "cut" || view === "cut-end") {
+        wing.rotation.set(0, 0, 0);
+        camera.position.set(-0.72, 0.03, 0.02);
+        camera.lookAt(-0.05, 0, 0);
+      } else if (view === "three-quarter" || view === "tq") {
+        wing.rotation.set(0.25, 0.65, 0.05);
+        camera.position.set(0.55, 0.38, 0.7);
+        camera.lookAt(0, 0, 0);
+      } else if (view === "side") {
+        // Camera on +Z: see length×thin (flat mid-wing), not the cut-cap plane
+        wing.rotation.set(0, 0, 0);
+        camera.position.set(0.05, 0.04, 0.85);
+        camera.lookAt(0, 0, 0);
+      } else if (view === "knuckle") {
+        wing.rotation.set(0.1, -1.0, 0.05);
+        camera.position.set(0.7, 0.28, 0.45);
+        camera.lookAt(0.12, 0.02, 0);
+      } else if (view === "skewer") {
+        wing.rotation.set(0.9, 0.15, 0.05);
+        camera.position.set(0.35, 0.55, 0.65);
+        camera.lookAt(0, 0, 0);
+        const metal = new THREE.MeshStandardMaterial({ color: 0xb0b6be, metalness: 0.85, roughness: 0.28 });
+        for (const z of [-0.042, 0.042]) {
+          const tine = new THREE.Mesh(new THREE.CylinderGeometry(0.0045, 0.0035, 0.75, 10), metal);
+          tine.rotation.z = Math.PI / 2;
+          tine.position.set(0.0, 0.0, z);
+          scene.add(tine);
+        }
+      } else {
+        // raw — full paddle from above-oblique
+        wing.rotation.set(0.08, 0.4, 0.04);
+        camera.position.set(0.35, 0.7, 0.55);
+        camera.lookAt(0, 0, 0);
+      }
+
+      document.title = "ready:" + view;
+      let n = 0;
+      const tick = () => {
+        renderer.render(scene, camera);
+        if (++n < 12) requestAnimationFrame(tick);
+        else document.title = "shot:" + view;
+      };
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>
