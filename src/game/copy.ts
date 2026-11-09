@@ -1,8 +1,8 @@
 export const PHASE_COPY: Record<string, { kicker: string; hint: string; coach: string }> = {
   title: {
-    kicker: "燒雞翼訓練",
-    hint: "袋入抽一隻、打橫雙尖鎖骨或者單尖搵軟骨、弱火靠近、左右劃螢幕轉叉、九成熟先搽蜜糖。",
-    coach: "目標外脆內嫩。雙尖鎖得住先轉得動；單尖吉歪就點劃都係厚肉自己轉向下。",
+    kicker: "燒雞翼",
+    hint: "袋入抽翼 · 吉叉 · 弱火轉勻",
+    coach: "",
   },
   count: {
     kicker: "今晚搽咩醬",
@@ -11,33 +11,33 @@ export const PHASE_COPY: Record<string, { kicker: string; hint: string; coach: s
   },
   pick: {
     kicker: "伸手入袋抽一隻",
-    hint: "左邊醃製、右邊鮮雞。撳袋或者撳掣，隨機抽出一隻。畫面只會見到你抽到嗰隻。",
+    hint: "左邊醃製中翼、右邊鮮雞中翼。撳袋或者撳掣，隨機抽出一隻。畫面只會見到你抽到嗰隻。",
     coach: "醃過入味快；鮮雞要之後自己搽醬。大隻肉厚會垂，細隻外皮易燶。",
   },
   skewer: {
-    kicker: "吉落燒烤叉",
-    hint: "打橫雙尖：叉同骨垂直，兩個尖穿過就鎖得住。單尖平行：只穿一尖，要吉中軟骨，唔中會自己轉。",
-    coach: "揀吉法再向上一彈或撳 F。對準先鎖得住。過火時左右劃螢幕轉叉。",
+    kicker: "吉落長燒烤叉",
+    hint: "對準骨位撳住「吉」；雙尖打橫鎖骨，或單尖搵軟骨。",
+    coach: "",
   },
   roast1: {
-    kicker: "第一次過火 · 弱火勤轉",
-    hint: "弱火可靠近炭，5–10 分鐘。開頭十數秒等皮定色，之後左右劃螢幕轉叉，將淺色面轉落火。避開油火。",
-    coach: "每幾十秒反轉。厚肉垂低先燶。吉得準，原先向上嗰面先轉得到落火。",
+    kicker: "第一次過火",
+    hint: "弱火靠近炭爐，左右劃轉叉；肉心約 74°、皮金黃就可以去下一步。",
+    coach: "",
   },
   honey: {
-    kicker: "九成熟先搽蜜糖",
-    hint: "表面金黃帶燶邊先搽。左傾浸碗，薄薄一層。每邊再收十秒；想蜜汁可再搽一次。",
-    coach: "未夠九成熟就搽，糖會搶火燶皮、肉心仲生。過厚會滴落炭着火。",
+    kicker: "搽蜜糖",
+    hint: "皮金黃帶燶邊先搽薄層；搽完就可以去下一步。",
+    coach: "",
   },
   roast2: {
     kicker: "收汁過火",
-    hint: "搽完每邊再燒十秒至兩分鐘。蜜糖見火就焦——抬高半寸，劃螢幕轉勻。最後半分鐘唔好再搽。",
-    coach: "想蜜汁焦香可以再搽一次。見到焦色飆就立即抬高。",
+    hint: "抬高半寸轉勻；蜜糖見火就焦，得就可以去下一步。",
+    coach: "",
   },
   plate: {
     kicker: "上紙碟",
     hint: "將叉移去右邊報紙碟再確定。",
-    coach: "右傾（D）對準紙碟，撳確定或向上一彈。太熱會彈。",
+    coach: "手機右傾對準紙碟，撳確定或向上一彈。太熱會彈。",
   },
   extract: {
     kicker: "夾隻雞翼出嚟",
@@ -56,7 +56,7 @@ export const DRILLS: { id: string; title: string; body: string }[] = [
   {
     id: "bag",
     title: "袋入抽翼",
-    body: "一袋醃製、一袋鮮雞。伸手入袋隨機抽一隻，抽到邊隻就燒邊隻。",
+    body: "一袋醃製中翼、一袋鮮雞中翼。伸手入袋隨機抽一隻，抽到邊隻就燒邊隻。",
   },
   {
     id: "skewer",
@@ -71,7 +71,7 @@ export const DRILLS: { id: string; title: string; body: string }[] = [
   {
     id: "swipe",
     title: "劃螢幕轉叉",
-    body: "幾時都可以左右劃螢幕轉燒烤叉，將淺色面轉落火。唔使撳住掣。",
+    body: "幾時都可以左右劃螢幕轉長燒烤叉，將淺色面轉落火。唔使撳住掣。",
   },
   {
     id: "rest",
@@ -86,7 +86,7 @@ export const DRILLS: { id: string; title: string; body: string }[] = [
   {
     id: "weak",
     title: "弱火靠近",
-    body: "弱火可靠近炭。5–10 分鐘，每幾十秒反轉；避開油火否則燻黑。",
+    body: "弱火可靠近炭爐（唔好貼住炭）。5–10 分鐘，每幾十秒反轉；避開油火否則燻黑。",
   },
   {
     id: "honey",

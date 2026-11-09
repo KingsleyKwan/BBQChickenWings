@@ -132,9 +132,9 @@ export const STALL = {
 };
 
 export const WING_ARCHETYPES = [
-  { id: "plump", name: "肥嘟嘟中翼", size: 1.1, fat: 0.72, grams: 118, note: "118g，肉厚，火要夠耐" },
-  { id: "lean", name: "精瘦中翼", size: 0.9, fat: 0.3, grams: 78, note: "78g，瘦，太近火會燶" },
-  { id: "classic", name: "街坊中翼", size: 1.0, fat: 0.5, grams: 96, note: "96g，最穩陣嗰隻" },
+  { id: "plump", name: "肥嘟嘟中翼", size: 1.1, fat: 0.72, grams: 118, note: "肉厚，弱火要燒耐啲（唔好貼炭）" },
+  { id: "lean", name: "精瘦中翼", size: 0.9, fat: 0.3, grams: 78, note: "瘦，太近火會燶" },
+  { id: "classic", name: "街坊中翼", size: 1.0, fat: 0.5, grams: 96, note: "最穩陣嗰隻" },
 ] as const;
 
 export type WingId = (typeof WING_ARCHETYPES)[number]["id"];

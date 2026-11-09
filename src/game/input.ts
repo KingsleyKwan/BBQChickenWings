@@ -14,6 +14,7 @@ export interface CookInput {
   wingX: number;
   wingY: number;
   wingZ: number;
+  holdFrozen: boolean;
 }
 
 const keys = new Set<string>();
@@ -33,12 +34,36 @@ let spinHold = 0;
 /** Decaying swipe impulse. Left swipe → +. Same sign as Q. */
 let swipeSpin = 0;
 let thrustHold = false;
+/** Extra freeze from UI holds (吉 / next-dot) so window swipe cannot spin the fork. */
+let uiHoldFreeze = false;
 let skewerMode = false;
 let wingYaw = 0;
 let wingPitch = 0;
 let wingX = 0;
 let wingY = 0;
 let wingZ = 0;
+
+const WING_YAW_LIM = Math.PI;
+const WING_PITCH_LIM = Math.PI;
+
+function zeroSpinResidue() {
+  swipeSpin = 0;
+  spinHold = 0;
+  pinchAngle = 0;
+  alphaRate = 0;
+}
+
+function isHoldFrozen() {
+  return thrustHold || uiHoldFreeze;
+}
+
+function clampWingPose() {
+  wingYaw = Math.max(-WING_YAW_LIM, Math.min(WING_YAW_LIM, wingYaw));
+  wingPitch = Math.max(-WING_PITCH_LIM, Math.min(WING_PITCH_LIM, wingPitch));
+  wingX = Math.max(-0.22, Math.min(0.22, wingX));
+  wingY = Math.max(-0.16, Math.min(0.16, wingY));
+  wingZ = Math.max(-0.22, Math.min(0.22, wingZ));
+}
 
 /** Degrees of raw beta/gamma ignored before response. Tuned 1.6 after
  *  typical iPhone 14/15 resting noise (~0.8–1.4°) + margin; was 2.4. */
@@ -63,6 +88,8 @@ export function attachInput(el: HTMLElement) {
     keys.clear();
     spinHold = 0;
     swipeSpin = 0;
+    thrustHold = false;
+    uiHoldFreeze = false;
   };
   window.addEventListener("keydown", kd);
   window.addEventListener("keyup", ku);
@@ -73,7 +100,7 @@ export function attachInput(el: HTMLElement) {
     if (e.beta == null || e.gamma == null) return;
     gyro = { b: e.beta, g: e.gamma, a: e.alpha ?? 0 };
     if (!gyroZero) gyroZero = { ...gyro };
-    if (lastAlpha != null) {
+    if (lastAlpha != null && !isHoldFrozen()) {
       let da = gyro.a - lastAlpha;
       if (da > 180) da -= 360;
       if (da < -180) da += 360;
@@ -100,6 +127,7 @@ export function attachInput(el: HTMLElement) {
   const swipePtrs = new Map<number, { x: number; y: number }>();
 
   const applySwipe = (dx: number, dy: number, width: number) => {
+    if (isHoldFrozen()) return false;
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
     if (absX > 4 && absX > absY * 0.72) {
@@ -127,8 +155,10 @@ export function attachInput(el: HTMLElement) {
       const h = Math.max(1, el.clientHeight);
       const absX = Math.abs(dx);
       const absY = Math.abs(dy);
-      // Horizontal swipe is handled on window (anywhere). Slow / vertical still aims.
-      if (!(absX > 5 && absX > absY * 0.82)) {
+      // Horizontal on the captured canvas must spin here — setPointerCapture
+      // keeps window swipe handlers from seeing these moves.
+      const spun = applySwipe(dx, dy, w);
+      if (!spun) {
         pointerX = Math.max(-1, Math.min(1, pointerX + dx / (w * 0.45)));
       }
       pointerY = Math.max(0, Math.min(1, pointerY - dy / (h * 0.7)));
@@ -136,10 +166,12 @@ export function attachInput(el: HTMLElement) {
       p.x = e.clientX;
       p.y = e.clientY;
     } else if (ptrs.size >= 2) {
-      const pts = [...ptrs.values()];
-      const ang = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
-      if (lastPinch) pinchAngle += (ang - lastPinch) * 1.65;
-      lastPinch = ang;
+      if (!isHoldFrozen()) {
+        const pts = [...ptrs.values()];
+        const ang = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+        if (lastPinch) pinchAngle += (ang - lastPinch) * 1.65;
+        lastPinch = ang;
+      }
       ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
   };
@@ -152,6 +184,9 @@ export function attachInput(el: HTMLElement) {
   };
 
   const winDown = (e: PointerEvent) => {
+    const el = e.target as HTMLElement | null;
+    if (el?.closest?.("button, a, input, textarea, .sheet, .ji-btn, .next-dot, .next-btn, .spin-pad")) return;
+    if (isHoldFrozen()) return;
     swipePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   };
   const winMove = (e: PointerEvent) => {
@@ -205,7 +240,7 @@ let capAccel: CapHandle;
 function applyOrientationSample(beta: number, gamma: number, alpha: number) {
   gyro = { b: beta, g: gamma, a: alpha };
   if (!gyroZero) gyroZero = { ...gyro };
-  if (lastAlpha != null) {
+  if (lastAlpha != null && !isHoldFrozen()) {
     let da = gyro.a - lastAlpha;
     if (da > 180) da -= 360;
     if (da < -180) da += 360;
@@ -286,6 +321,7 @@ function deadzone(v: number, z: number) {
 
 export function sampleInput(dt: number): CookInput {
   const k = held();
+  const frozen = isHoldFrozen();
   let distance = 1 - pointerY;
   let angle = pointerX;
   let spinRate = 0;
@@ -296,13 +332,20 @@ export function sampleInput(dt: number): CookInput {
     if (k.has("KeyS") || k.has("ArrowDown")) distance += 0.7 * dt;
     if (k.has("KeyA") || k.has("ArrowLeft")) angle += 0.9 * dt;
     if (k.has("KeyD") || k.has("ArrowRight")) angle -= 0.9 * dt;
-    if (k.has("KeyQ")) spinRate += 2.4;
-    if (k.has("KeyE")) spinRate -= 2.4;
-    spinRate += spinHold * 2.6;
-    spinRate += swipeSpin;
+    if (!frozen) {
+      if (k.has("KeyQ")) spinRate += 2.4;
+      if (k.has("KeyE")) spinRate -= 2.4;
+      spinRate += spinHold * 2.6;
+      spinRate += swipeSpin;
+    }
   }
-  swipeSpin *= Math.exp(-3.8 * dt);
-  if (Math.abs(swipeSpin) < 0.03) swipeSpin = 0;
+  if (frozen) {
+    swipeSpin = 0;
+    spinHold = 0;
+  } else {
+    swipeSpin *= Math.exp(-3.8 * dt);
+    if (Math.abs(swipeSpin) < 0.03) swipeSpin = 0;
+  }
   distance = Math.max(0.05, Math.min(1.15, distance));
   angle = Math.max(-1.2, Math.min(1.2, angle));
   pointerY = 1 - distance;
@@ -319,33 +362,40 @@ export function sampleInput(dt: number): CookInput {
     // Slightly higher gain after soft-knee so full tilt still reaches edges
     distance = Math.max(0.05, Math.min(1.15, 0.62 + dBeta * 0.95));
     angle = Math.max(-1.2, Math.min(1.2, dGamma * 1.45));
-    spinRate += -alphaRate * 0.12 + pinchAngle * 1.15;
+    if (!frozen) spinRate += -alphaRate * 0.12 + pinchAngle * 1.15;
     horizon = {
       x: Math.max(-1, Math.min(1, rawG / 28)),
       y: Math.max(-1, Math.min(1, rawB / 38)),
     };
-  } else {
+  } else if (!frozen) {
     spinRate += pinchAngle * 1.8;
   }
-  pinchAngle *= 0.32;
-  alphaRate *= 0.85;
+  if (frozen) {
+    pinchAngle = 0;
+    alphaRate = 0;
+    spinRate = 0;
+  } else {
+    pinchAngle *= 0.32;
+    alphaRate *= 0.85;
+  }
 
   const confirm = k.has("Space") || tapConfirm;
   const thrust = k.has("KeyF") || flickUp || (skewerMode && thrustHold);
   tapConfirm = false;
   flickUp = false;
 
-  if (skewerMode) {
+  if (skewerMode && !frozen) {
     if (k.has("KeyA") || k.has("ArrowLeft")) wingYaw += 0.9 * dt;
     if (k.has("KeyD") || k.has("ArrowRight")) wingYaw -= 0.9 * dt;
     if (k.has("KeyW") || k.has("ArrowUp")) wingPitch -= 0.7 * dt;
     if (k.has("KeyS") || k.has("ArrowDown")) wingPitch += 0.7 * dt;
+    clampWingPose();
   }
 
   return {
     distance,
     angle,
-    spinRate: skewerMode ? 0 : spinRate,
+    spinRate: skewerMode || frozen ? 0 : spinRate,
     confirm,
     thrust,
     plateAim: (angle + 1.2) / 2.4,
@@ -356,6 +406,7 @@ export function sampleInput(dt: number): CookInput {
     wingX,
     wingY,
     wingZ,
+    holdFrozen: frozen,
   };
 }
 
@@ -374,7 +425,21 @@ export function impulseSpin(v: number) {
 }
 
 export function setThrustHold(v: boolean) {
-  thrustHold = v;
+  thrustHold = !!v;
+  if (v) zeroSpinResidue();
+}
+
+export function setForkHoldFreeze(on: boolean) {
+  uiHoldFreeze = on;
+  if (on) zeroSpinResidue();
+  else {
+    // Ensure 吉 / 下一步 release never leaves a stuck freeze.
+    uiHoldFreeze = false;
+  }
+}
+
+export function isForkHoldFrozen() {
+  return isHoldFrozen();
 }
 
 export function setSkewerMode(on: boolean) {
@@ -397,16 +462,15 @@ export function nudgeWing(delta: {
   y?: number;
   z?: number;
 }) {
-  if (delta.yaw) wingYaw += delta.yaw;
-  if (delta.pitch) wingPitch += delta.pitch;
+  const frozen = isHoldFrozen();
+  if (!frozen) {
+    if (delta.yaw) wingYaw += delta.yaw;
+    if (delta.pitch) wingPitch += delta.pitch;
+  }
   if (delta.x) wingX += delta.x;
   if (delta.y) wingY += delta.y;
   if (delta.z) wingZ += delta.z;
-  wingYaw = Math.max(-1.4, Math.min(1.4, wingYaw));
-  wingPitch = Math.max(-1.1, Math.min(1.1, wingPitch));
-  wingX = Math.max(-0.22, Math.min(0.22, wingX));
-  wingY = Math.max(-0.16, Math.min(0.16, wingY));
-  wingZ = Math.max(-0.22, Math.min(0.22, wingZ));
+  clampWingPose();
 }
 
 export function resetWingNudge() {
