@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { STALL, type BagKind } from "../constants";
 import { assembleMidWing, makeMidWingGeo, paintMidWing } from "./wing";
+import { forkLocalBoneHalfSpan } from "./fork-frame";
 import { prefersReducedMotion, tickJuice, cameraOffset } from "../juice";
 import { skewerPing, oilPop, footstep } from "../audio";
 import type { Sim } from "../sim";
@@ -69,6 +70,8 @@ export class StallScene {
 	npcStepAcc = 0;
 	lastNpcX = -2.4;
 	prevThrust = 0;
+	exitMark!: THREE.Mesh;
+	exitLife = 0;
 	_handle = new THREE.Vector3();
 	_tines = new THREE.Vector3();
 	_dir = new THREE.Vector3();
@@ -85,6 +88,12 @@ export class StallScene {
 		{ x: 50, y: 50, visible: false },
 		{ x: 50, y: 50, visible: false },
 	];
+	targetScreen = [
+		{ x: 50, y: 50, visible: false },
+		{ x: 50, y: 50, visible: false },
+	];
+	aimRays: THREE.Line[] = [];
+	_aimTgt = new THREE.Vector3();
 	constructor(canvas: HTMLCanvasElement) {
 		this.renderer = new THREE.WebGLRenderer({
 			canvas,
@@ -141,6 +150,18 @@ export class StallScene {
 		this.aimGhost = this.makeAimGhost();
 		this.aimGhost.scale.setScalar(this.forkScale);
 		this.scene.add(this.aimGhost);
+		this.makeAimRays();
+		this.exitMark = new THREE.Mesh(
+			new THREE.SphereGeometry(.014, 8, 6),
+			new THREE.MeshBasicMaterial({
+				color: 16775128,
+				transparent: true,
+				opacity: 0,
+				depthWrite: false
+			})
+		);
+		this.exitMark.visible = false;
+		this.scene.add(this.exitMark);
 		this.ghostFork = this.makeAimGhost();
 		this.ghostFork.scale.setScalar(this.forkScale);
 		this.ghostFork.visible = false;
@@ -182,6 +203,26 @@ export class StallScene {
 		}
 		g.visible = false;
 		return g;
+	}
+	makeAimRays() {
+		const mat = new THREE.LineBasicMaterial({
+			color: 16769448,
+			transparent: true,
+			opacity: .85,
+			depthTest: false,
+		});
+		for (let i = 0; i < 2; i++) {
+			const geo = new THREE.BufferGeometry().setFromPoints([
+				new THREE.Vector3(),
+				new THREE.Vector3(),
+			]);
+			const line = new THREE.Line(geo, mat.clone());
+			line.visible = false;
+			line.frustumCulled = false;
+			line.renderOrder = 4;
+			this.scene.add(line);
+			this.aimRays.push(line);
+		}
 	}
 	resize() {
 		const c = this.renderer.domElement;
@@ -424,10 +465,10 @@ export class StallScene {
 		this.board.position.set(0, .42, .72);
 		this.scene.add(this.board);
 		this.shopBags.marinated = this.makeShopBag("marinated");
-		this.shopBags.marinated.position.set(-.3, .2, -.06);
+		this.shopBags.marinated.position.set(-.34, .24, -.02);
 		this.board.add(this.shopBags.marinated);
 		this.shopBags.plain = this.makeShopBag("plain");
-		this.shopBags.plain.position.set(.3, .2, -.06);
+		this.shopBags.plain.position.set(.34, .24, -.02);
 		this.board.add(this.shopBags.plain);
 		const sign = new THREE.Mesh(new THREE.BoxGeometry(.85, .38, .04), new THREE.MeshStandardMaterial({
 			map: this.makeSignTex(),
@@ -601,10 +642,11 @@ export class StallScene {
 		group.position.copy(this._tines).addScaledVector(this._dir, -.72 * scale);
 		if (Number.isNaN(group.position.x)) group.position.set(0, .8, .4);
 	}
-	/** Close-up 吉 pose: two tines in frame, driving into the wing as thrust rises. */
-	poseSkewerFork(thrust: number) {
+	/** Close-up 吉 pose: tips meet the wing surface early, then drive through as thrust rises. */
+	poseSkewerFork(thrust: number, group: THREE.Object3D = this.fork) {
 		const t = Math.max(0, Math.min(1, thrust));
-		this._tines.set(.04, .72 - t * .06, .24 - t * .16);
+		// Wing rests near (.04, .67, .10). Tips start ON the skin (z≈.10) and drive through to exit (z≈-.14).
+		this._tines.set(.04, .67 - t * .02, .10 - t * .24);
 		const scale = .8;
 		this._handle.set(.18, .34, 1.05);
 		this._dir.copy(this._tines).sub(this._handle);
@@ -618,9 +660,78 @@ export class StallScene {
 		this._basisZ.crossVectors(this._basisX, this._basisY).normalize();
 		this._basisM.makeBasis(this._basisX, this._basisY, this._basisZ);
 		this._aimQ.setFromRotationMatrix(this._basisM);
-		this.fork.quaternion.copy(this._aimQ);
-		this.fork.scale.setScalar(scale);
-		this.fork.position.copy(this._tines).addScaledVector(this._dir, -.908 * scale);
+		group.quaternion.copy(this._aimQ);
+		group.scale.setScalar(scale);
+		group.position.copy(this._tines).addScaledVector(this._dir, -.908 * scale);
+	}
+	/**
+	 * Pull tip mid-point onto the bone-target line so the fork never hovers in empty air.
+	 * thrust 0 = tips kiss the near skin; thrust 1 = tips exit the far cut.
+	 */
+	alignSkewerTipsToWing(thrust: number, wing: THREE.Object3D) {
+		const tA = wing.getObjectByName("targetA");
+		const tB = wing.getObjectByName("targetB");
+		if (!tA || !tB) return;
+		this.fork.updateWorldMatrix(true, true);
+		wing.updateWorldMatrix(true, true);
+		const tip = this.tineWorld(1).add(this.tineWorld(-1)).multiplyScalar(.5);
+		const bone = tA.getWorldPosition(new THREE.Vector3()).add(tB.getWorldPosition(new THREE.Vector3())).multiplyScalar(.5);
+		const axis = new THREE.Vector3(1, 0, 0).transformDirection(this.fork.matrixWorld).normalize();
+		const t = Math.max(0, Math.min(1, thrust));
+		// Keep the fork pose (player thrust feel). Slide the wing so bones sit on the tip line:
+		// thrust 0 → tips kiss near skin (bone a bit ahead of tips); thrust 1 → tips past bones.
+		const desiredBone = tip.clone().addScaledVector(axis, 0.05 * (1 - t) - 0.11 * t);
+		const delta = desiredBone.sub(bone);
+		wing.position.add(delta);
+		wing.updateWorldMatrix(true, true);
+		this._tines.copy(tip);
+	}
+	/** Plump is thicker on local Y; lean is flatter. Local Z is the bone-span axis. */
+	wingScale(size: number, fat: number, mul: number, squash = 1, stretchY = 1) {
+		const thick = 1 + (fat - .5) * .95;
+		const wide = 1 + (size - 1) * .85;
+		return {
+			x: size * mul * squash,
+			y: size * mul * thick * stretchY,
+			z: size * mul * wide * squash
+		};
+	}
+	biasBoneZ(grp: THREE.Group, size: number) {
+		const tA = grp.getObjectByName("targetA");
+		const tB = grp.getObjectByName("targetB");
+		if (!tA || !tB) return;
+		if (typeof tA.userData.baseZ !== "number") {
+			tA.userData.baseZ = tA.position.z;
+			tB.userData.baseZ = tB.position.z;
+		}
+		const bias = 1 + (size - 1) * .28;
+		tA.position.z = (tA.userData.baseZ as number) * bias;
+		tB.position.z = (tB.userData.baseZ as number) * bias;
+	}
+	spreadTines(group: THREE.Object3D, pinch: number) {
+		group.children.forEach((ch) => {
+			if (Math.abs(ch.position.y) > .008) ch.position.y = Math.sign(ch.position.y) * pinch;
+		});
+	}
+	syncBoneMarks(grp: THREE.Group, show: boolean, aim: number) {
+		for (const name of ["boneMarkA", "boneMarkB"]) {
+			const mark = grp.getObjectByName(name);
+			if (!mark) continue;
+			mark.visible = show;
+			if (!show || !(mark instanceof THREE.Mesh)) continue;
+			mark.lookAt(this.camera.position);
+			const mat = asBasic(mark.material);
+			const hot = aim >= .62;
+			mat.opacity = hot ? 1 : .82;
+			mat.color.setHex(hot ? 8257402 : 16769448);
+			mark.scale.setScalar(hot ? 1.5 : 1.2);
+			for (const ch of mark.children) {
+				if (!(ch instanceof THREE.Mesh)) continue;
+				const rm = asBasic(ch.material);
+				rm.opacity = hot ? 1 : .78;
+				rm.color.setHex(hot ? 8257402 : 16775128);
+			}
+		}
 	}
 	makeGrip() {
 		const skin = new THREE.MeshStandardMaterial({
@@ -718,30 +829,82 @@ export class StallScene {
 		tex.colorSpace = THREE.SRGBColorSpace;
 		return tex;
 	}
+	makeBagLabelTex(kind: BagKind) {
+		const marinated = kind === "marinated";
+		const w = 512;
+		const h = 256;
+		const c = document.createElement("canvas");
+		c.width = w;
+		c.height = h;
+		const ctx = c.getContext("2d")!;
+		ctx.fillStyle = marinated ? "#3a1e0e" : "#fff8f0";
+		ctx.fillRect(0, 0, w, h);
+		ctx.fillStyle = marinated ? "#c47a12" : "#b01a1a";
+		ctx.fillRect(16, 16, w - 32, h - 32);
+		ctx.fillStyle = marinated ? "#2a1408" : "#fff8f0";
+		ctx.fillRect(32, 32, w - 64, h - 64);
+		ctx.fillStyle = marinated ? "#f4d090" : "#8a1212";
+		ctx.font = "bold 72px \"Noto Sans CJK HK\", \"Noto Sans TC\", \"PingFang HK\", \"Microsoft JhengHei\", sans-serif";
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.fillText(marinated ? "醃製中翼" : "鮮雞中翼", w / 2, h / 2 - 8);
+		ctx.font = "bold 26px sans-serif";
+		ctx.fillText(marinated ? "雞中翼 · MARINATED" : "雞中翼 · FRESH", w / 2, h / 2 + 56);
+		const tex = new THREE.CanvasTexture(c);
+		tex.colorSpace = THREE.SRGBColorSpace;
+		tex.anisotropy = 4;
+		return tex;
+	}
 	makeShopBagTex(kind: BagKind) {
-		const s = 256;
+		const s = 512;
 		const c = document.createElement("canvas");
 		c.width = s;
 		c.height = s;
 		const ctx = c.getContext("2d")!;
-		if (kind === "marinated") {
+		const marinated = kind === "marinated";
+		if (marinated) {
 			const g = ctx.createLinearGradient(0, 0, s, s);
-			g.addColorStop(0, "#5a3218");
-			g.addColorStop(.5, "#3a1e0e");
-			g.addColorStop(1, "#2a1408");
+			g.addColorStop(0, "#6a3a1c");
+			g.addColorStop(.45, "#3e2210");
+			g.addColorStop(1, "#241208");
 			ctx.fillStyle = g;
 			ctx.fillRect(0, 0, s, s);
+			// plastic sheen bands
+			ctx.fillStyle = "rgba(232,180,96,0.18)";
+			ctx.fillRect(0, 40, s, 18);
+			ctx.fillRect(0, 380, s, 10);
 			ctx.fillStyle = "#c47a12";
-			ctx.fillRect(0, 28, s, 52);
+			ctx.fillRect(28, 150, s - 56, 110);
+			ctx.fillStyle = "#2a1608";
+			ctx.fillRect(40, 162, s - 80, 86);
+			ctx.fillStyle = "#f4d090";
+			ctx.font = "bold 64px sans-serif";
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.fillText("醃製中翼", s / 2, 208);
+			ctx.font = "bold 28px sans-serif";
 			ctx.fillStyle = "#e8c070";
-			ctx.fillRect(0, 96, s, 8);
+			ctx.fillText("MARINATED", s / 2, 290);
 		} else {
-			ctx.fillStyle = "#e8e4dc";
+			ctx.fillStyle = "#f2efe8";
 			ctx.fillRect(0, 0, s, s);
+			ctx.fillStyle = "rgba(255,255,255,0.35)";
+			ctx.fillRect(0, 36, s, 22);
 			ctx.fillStyle = "#b01a1a";
-			ctx.fillRect(0, 28, s, 18);
-			ctx.fillStyle = "#f4ead4";
-			ctx.fillRect(0, 96, s, 8);
+			ctx.fillRect(28, 150, s - 56, 110);
+			ctx.fillStyle = "#fff8f0";
+			ctx.fillRect(40, 162, s - 80, 86);
+			ctx.fillStyle = "#8a1212";
+			ctx.font = "bold 64px sans-serif";
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.fillText("鮮雞中翼", s / 2, 208);
+			ctx.font = "bold 28px sans-serif";
+			ctx.fillStyle = "#b01a1a";
+			ctx.fillText("FRESH", s / 2, 290);
+			ctx.strokeStyle = "#c8c0b4";
+			ctx.lineWidth = 6;
+			ctx.strokeRect(18, 18, s - 36, s - 36);
 		}
 		const tex = new THREE.CanvasTexture(c);
 		tex.colorSpace = THREE.SRGBColorSpace;
@@ -753,53 +916,105 @@ export class StallScene {
 		g.name = kind === "marinated" ? "bag-marinated" : "bag-plain";
 		g.userData.pickKind = "bag";
 		g.userData.bag = kind;
-		const bodyMat = new THREE.MeshStandardMaterial({
+		const marinated = kind === "marinated";
+		const tag = (o: THREE.Object3D) => {
+			o.userData.pickKind = "bag";
+			o.userData.bag = kind;
+		};
+		const plastic = new THREE.MeshStandardMaterial({
 			map: this.makeShopBagTex(kind),
-			color: kind === "marinated" ? 8014370 : 16052456,
-			roughness: .38,
-			metalness: .02,
+			color: marinated ? 8014370 : 16118760,
+			roughness: marinated ? .42 : .28,
+			metalness: .04,
 			transparent: true,
-			opacity: kind === "marinated" ? .82 : .62,
+			opacity: marinated ? .9 : .78,
 			side: THREE.DoubleSide
 		});
-		const body = new THREE.Mesh(new THREE.BoxGeometry(.48, .36, .22), bodyMat);
-		body.userData.pickKind = "bag";
-		body.userData.bag = kind;
+		// Soft open-top bag: tapered box + folded lip (reads as a wet-market bag, not a mystery cube).
+		// Lower pouch (opaque) + open mouth so peek mid-wings read as contents.
+		const body = new THREE.Mesh(new THREE.BoxGeometry(.58, .28, .28), plastic);
+		body.position.y = -.06;
+		tag(body);
 		g.add(body);
-		const lip = new THREE.Mesh(new THREE.BoxGeometry(.5, .04, .04), new THREE.MeshStandardMaterial({
-			color: kind === "marinated" ? 3810320 : 14209220,
-			roughness: .55
+		const collar = new THREE.Mesh(new THREE.BoxGeometry(.6, .12, .3), new THREE.MeshStandardMaterial({
+			color: marinated ? 5328192 : 15724527,
+			roughness: .35,
+			metalness: .03,
+			transparent: true,
+			opacity: marinated ? .55 : .42,
+			side: THREE.DoubleSide,
 		}));
-		lip.position.y = .18;
-		lip.userData.pickKind = "bag";
-		lip.userData.bag = kind;
-		g.add(lip);
-		const handleMat = new THREE.MeshStandardMaterial({
-			color: kind === "marinated" ? 3810320 : 14209220,
-			roughness: .55
+		collar.position.y = .14;
+		tag(collar);
+		g.add(collar);
+		const lipMat = new THREE.MeshStandardMaterial({
+			color: marinated ? 3810320 : 15066597,
+			roughness: .5,
+			metalness: .02,
+			transparent: true,
+			opacity: .88
 		});
-		for (const x of [-.1, .1]) {
-			const handle = new THREE.Mesh(new THREE.TorusGeometry(.06, .008, 6, 12, Math.PI), handleMat);
+		const lip = new THREE.Mesh(new THREE.BoxGeometry(.56, .05, .3), lipMat);
+		lip.position.y = .2;
+		lip.scale.set(1.02, 1, .92);
+		tag(lip);
+		g.add(lip);
+		// Gathered mouth ring so the top reads open.
+		const mouth = new THREE.Mesh(new THREE.TorusGeometry(.2, .012, 6, 18), lipMat);
+		mouth.rotation.x = Math.PI / 2;
+		mouth.position.y = .23;
+		mouth.scale.set(1.15, .85, 1);
+		tag(mouth);
+		g.add(mouth);
+		const handleMat = new THREE.MeshStandardMaterial({
+			color: marinated ? 3810320 : 14209220,
+			roughness: .45
+		});
+		for (const x of [-.12, .12]) {
+			const handle = new THREE.Mesh(new THREE.TorusGeometry(.09, .01, 6, 14, Math.PI), handleMat);
 			handle.rotation.z = Math.PI;
-			handle.position.set(x, .21, 0);
-			handle.userData.pickKind = "bag";
-			handle.userData.bag = kind;
+			handle.position.set(x, .28, 0);
+			tag(handle);
 			g.add(handle);
 		}
 		const guts = new THREE.Group();
 		guts.name = "guts";
-		const peek = assembleMidWing();
-		peek.scale.setScalar(1.15);
-		peek.position.set(0, .22, .02);
-		peek.rotation.set(-.95, kind === "marinated" ? .65 : -.5, .1);
-		if (kind === "marinated") {
-			peek.traverse((o) => {
-				if (!(o instanceof THREE.Mesh) || o.name !== "meat") return;
-				asStd(o.material).color.setHex(0xd08a3c);
-			});
+		// Two peek mid-wings so the open bag clearly holds 中翼.
+		for (const [i, conf] of [
+			{ pos: [0.02, .36, .05] as [number, number, number], rot: [-.65, marinated ? .55 : -.45, .08] as [number, number, number], sc: 2.05 },
+			{ pos: [-.08, .33, -.04] as [number, number, number], rot: [-.85, marinated ? -.4 : .55, -.12] as [number, number, number], sc: 1.8 },
+		].entries()) {
+			const peek = assembleMidWing({ uniqueGeo: true });
+			peek.name = `peek-${i}`;
+			peek.scale.setScalar(conf.sc);
+			peek.position.set(...conf.pos);
+			peek.rotation.set(...conf.rot);
+			if (marinated) this.lookMarinated(peek);
+			guts.add(peek);
 		}
-		guts.add(peek);
 		g.add(guts);
+		// Front-facing label card so 「醃製中翼／鮮雞中翼」 reads upright on phone.
+		const labelMat = new THREE.MeshBasicMaterial({
+			map: this.makeBagLabelTex(kind),
+			transparent: true,
+			opacity: .98,
+			side: THREE.DoubleSide,
+			depthWrite: false,
+		});
+		// Front card (faces player) + top card (readable when looking slightly down).
+		const label = new THREE.Mesh(new THREE.PlaneGeometry(.58, .28), labelMat);
+		label.position.set(0, .08, .2);
+		label.name = "bagLabel";
+		label.userData.pickKind = "bag";
+		label.userData.bag = kind;
+		g.add(label);
+		const labelTop = new THREE.Mesh(new THREE.PlaneGeometry(.5, .22), labelMat.clone());
+		labelTop.rotation.x = -Math.PI / 2.4;
+		labelTop.position.set(0, .3, .02);
+		labelTop.name = "bagLabelTop";
+		labelTop.userData.pickKind = "bag";
+		labelTop.userData.bag = kind;
+		g.add(labelTop);
 		return g;
 	}
 	lookMarinated(grp: THREE.Object3D) {
@@ -958,17 +1173,17 @@ export class StallScene {
 		const dist = sim.distance;
 		this.tines.rotation.x = sim.forkRoll;
 		const parallel0 = (sim.wings[0]?.skewerStyle ?? sim.skewerStyle) === "parallel" && sim.wingCount === 1;
-		const lock0 = sim.wings[0]?.skewerQuality ?? .4;
 		const aiming = sim.phase === "skewer" && !sim.wings.every((w) => w.onFork);
-		const pinch = aiming ? .105 : parallel0 ? .022 : .022 - Math.max(0, lock0 - .35) * .012;
-		this.tines.children.forEach((ch) => {
-			if (Math.abs(ch.position.y) > .008) ch.position.y = Math.sign(ch.position.y) * pinch;
-		});
-		if (sim.phase === "pick" || sim.phase === "count") this.poseHeldFork(this.fork, -.52, .88);
-		else if (sim.phase === "skewer") this.poseSkewerFork(sim.thrust);
-		else if (sim.phase !== "score") this.poseHeldFork(this.fork, sim.angle, dist);
-		this.grip.visible = sim.phase !== "score" && sim.phase !== "extract" && sim.phase !== "title";
-		this.fork.visible = sim.phase !== "title";
+		const pinch = aiming ? .105 : parallel0 ? .02 : .05;
+		this.spreadTines(this.tines, pinch);
+		const bagFocus = sim.phase === "pick" || sim.phase === "count";
+		// Hide fork/grip on bag pick so the mid-frame rod does not look grid-locked.
+		if (!bagFocus) {
+			if (sim.phase === "skewer") this.poseSkewerFork(sim.thrust);
+			else if (sim.phase !== "score") this.poseHeldFork(this.fork, sim.angle, dist);
+		}
+		this.grip.visible = !bagFocus && sim.phase !== "score" && sim.phase !== "extract" && sim.phase !== "title";
+		this.fork.visible = !bagFocus && sim.phase !== "title";
 		if (this.grip.visible) {
 			this.fork.localToWorld(this._handle.set(-1.02, -.02, 0));
 			this.grip.position.copy(this._handle);
@@ -984,6 +1199,7 @@ export class StallScene {
 		sim.wings.forEach((w, i) => {
 			const grp = this.wings[i];
 			if (!grp) return;
+			this.biasBoneZ(grp, w.size);
 			grp.visible = sim.phase !== "pick" && sim.phase !== "count";
 			const mesh = asMesh(grp.getObjectByName("meat") ?? grp.children[0]);
 			const innerSign = twoRoastNow ? i === 0 ? 1 : -1 : 0;
@@ -1013,40 +1229,79 @@ export class StallScene {
 				const f = sim.extractForce;
 				const stretchY = 1 + f * .38;
 				const squash = 1 - f * .12;
-				grp.scale.set(w.size * 1.32 * squash, w.size * 1.32 * stretchY, w.size * 1.32 * squash);
+				const sc = this.wingScale(w.size, w.fat, 1.32, squash, stretchY);
+				grp.scale.set(sc.x, sc.y, sc.z);
 				grp.rotation.z = -f * .18;
 				grp.rotation.x = w.hang * (1 - f);
+				this.syncBoneMarks(grp, false, 0);
 			} else if (sim.phase === "skewer" && !w.onFork) {
 				if (grp.parent === this.fork) this.scene.attach(grp);
 				grp.visible = true;
 				const a = sim.wingAim;
-				grp.position.set(0.04 + a.x, 0.66 + a.y, 0.08 + a.z);
 				grp.rotation.set(a.pitch, a.yaw, a.roll);
-				grp.scale.setScalar(w.size * 2.05);
+				// Flat paddle: slight Y compress so 2.05 hero scale still reads as 雞中翼
+				const sc = this.wingScale(w.size, w.fat, 1.92, 1, 0.58);
+				grp.scale.set(sc.x, sc.y, sc.z);
+				// Anchor the wing on the tip line so contact is never an air gap.
+				// wingAim x/y/z are fine aim offsets; thrust slides the meat onto the tines.
+				this.fork.updateWorldMatrix(true, true);
+				const tip = this.tineWorld(1).add(this.tineWorld(-1)).multiplyScalar(.5);
+				const axis = new THREE.Vector3(1, 0, 0).transformDirection(this.fork.matrixWorld).normalize();
+				const th = Math.max(0, Math.min(1, sim.thrust));
+				const along = -0.02 * (1 - th) - 0.15 * th;
+				grp.position.copy(tip).addScaledVector(axis, along);
+				grp.position.x += a.x;
+				grp.position.y += a.y;
+				grp.position.z += a.z;
+				// Kill remaining perpendicular miss so tips never hover under the slab.
+				grp.updateWorldMatrix(true, true);
+				const tA = grp.getObjectByName("targetA");
+				const tB = grp.getObjectByName("targetB");
+				if (tA && tB) {
+					const bone = tA.getWorldPosition(new THREE.Vector3()).add(tB.getWorldPosition(new THREE.Vector3())).multiplyScalar(.5);
+					const tipNow = tip.clone().addScaledVector(axis, along);
+					const perp = bone.clone().sub(tipNow);
+					perp.addScaledVector(axis, -perp.dot(axis));
+					grp.position.sub(perp);
+				}
 				this.updateSkewerAim(sim, grp);
+				this.syncBoneMarks(grp, true, sim.skewerAim);
+				const parallelAim = (w.skewerStyle === "parallel" || sim.skewerStyle === "parallel") && sim.wingCount === 1;
+				grp.traverse((o) => {
+					if (o.name !== "knuckle" || !(o instanceof THREE.Mesh)) return;
+					const km = asStd(o.material);
+					const hot = parallelAim && sim.skewerAim >= .62;
+					km.emissive.setHex(hot ? 7004026 : 0);
+					km.emissiveIntensity = hot ? .55 : 0;
+				});
 			} else if (sim.phase === "title") {
 				if (grp.parent === this.fork) this.scene.attach(grp);
 				grp.visible = i === 0;
 				grp.position.set(0.0, 0.56, 0.2);
-				grp.rotation.set(-0.42, 1.32, 0.06);
-				grp.scale.setScalar(2.85);
+				grp.rotation.set(-0.28, 0.55, 0.18);
+				const sc = this.wingScale(w.size, w.fat, 3.05);
+				grp.scale.set(sc.x, sc.y, sc.z);
+				this.syncBoneMarks(grp, false, 0);
 			} else {
 				if (grp.parent !== this.fork) this.fork.attach(grp);
 				const parallel = (w.skewerStyle === "parallel" || !w.onFork && sim.skewerStyle === "parallel") && sim.wingCount === 1;
 				if (parallel) {
 					grp.rotation.set(0, 0, 0);
 					const onTine = w.cartilageHit ? pinch : pinch + .006;
-					if (w.onFork) grp.position.set(.64 + i * .04, onTine, 0);
+					if (w.onFork) grp.position.set(.7 + i * .04, onTine, 0);
 					else {
 						grp.position.set(.78, pinch + .01, .02);
 						grp.rotation.z = Math.sin(this.t * 1.6) * .04;
 					}
 				} else {
-					// Paddle on its long edge so the two tines pin both bones.
+					// Paddle on its long edge so the two tines pin both bones (enter near cut, exit far cut).
 					grp.rotation.set(Math.PI / 2, 0, 0);
-					grp.position.set(.66 + (sim.wingCount === 2 ? (i - .5) * .08 : 0), 0, w.onFork ? 0 : .02);
+					// Centre on shaft; z=0 so thickness intersects tines (no hover gap).
+					grp.position.set(.7 + (sim.wingCount === 2 ? (i - .5) * .08 : 0), 0, 0);
 				}
-				grp.scale.set(w.size * 1.32, w.size * 1.32, w.size * 1.32 * (w.onFork || sim.phase === "skewer" ? 1 : .92));
+				const sc = this.wingScale(w.size, w.fat, 1.32);
+				const zMul = w.onFork || sim.phase === "skewer" ? 1 : .92;
+				grp.scale.set(sc.x, sc.y, sc.z * zMul);
 				if (parallel) {
 					grp.rotation.z = !w.cartilageHit && w.onFork ? w.hangVel * .04 : grp.rotation.z;
 				} else {
@@ -1054,7 +1309,7 @@ export class StallScene {
 					grp.rotation.x = Math.PI / 2 + (w.onFork ? w.hang : 0);
 				}
 				if (sim.phase === "skewer" && parallel && !w.onFork) {
-					const aim = 1 - Math.min(1, Math.abs(sim.angle) * .9 + Math.abs(sim.distance - .55) * .5);
+					const aim = sim.skewerAim;
 					grp.traverse((o) => {
 						if (o.name !== "knuckle" || !(o instanceof THREE.Mesh)) return;
 						const km = asStd(o.material);
@@ -1069,8 +1324,22 @@ export class StallScene {
 						km.emissiveIntensity = 0;
 					}
 				});
+				this.syncBoneMarks(grp, sim.phase === "skewer" && !w.onFork, sim.skewerAim);
 			}
 		});
+		if (!aiming && !parallel0) {
+			const mounted = this.wings[0];
+			if (mounted && mounted.parent === this.fork) {
+				// Resting roast mount is rotation.x = +π/2 (local +Z → fork −Y).
+				// Hang adds more X spin; measure the un-hung span so the tines stay in the bones.
+				const hung = mounted.rotation.x;
+				mounted.rotation.x = Math.PI / 2;
+				const half = forkLocalBoneHalfSpan(this.fork, mounted);
+				mounted.rotation.x = hung;
+				mounted.updateWorldMatrix(true, true);
+				this.spreadTines(this.tines, Math.max(.03, Math.min(.14, half)));
+			}
+		}
 		if (sim.phase === "honey" || sim.phase === "roast2" || sim.phase === "plate") {
 			const liquid = this.bowl.getObjectByName("liquid");
 			if (liquid) {
@@ -1210,20 +1479,51 @@ export class StallScene {
 			const ringR = .2 + sim.distance * .12;
 			this.sweetRing.scale.setScalar(.9 + ringR * .5);
 		}
-		this.aimGhost.visible = false;
-		if (this.aimGhost.visible) {
-			this.poseHeldFork(this.aimGhost, 0, .55);
+		this.aimGhost.visible = aiming;
+		if (aiming) {
+			this.poseSkewerFork(Math.min(1, sim.thrust + .42), this.aimGhost);
+			this.spreadTines(this.aimGhost, .105);
 			const mat = asBasic(asMesh(this.aimGhost.children[0]).material);
-			const aimOk = Math.abs(sim.angle) < .28 && Math.abs(sim.distance - .55) < .22;
-			mat.opacity = aimOk ? .45 : .22;
+			const aimOk = sim.skewerAim >= .62;
+			mat.opacity = aimOk ? .5 : .26;
 			mat.color.setHex(aimOk ? 9306032 : 11064575);
+			// Ghost pose reuses the fork scratch vectors. Put the real fork (and _tines) back.
+			this.poseSkewerFork(sim.thrust);
+			// Wing is re-anchored to tip line in the skewer aim branch above on the next sync.
+			const aimWing = this.wings[0];
+			if (aimWing && sim.phase === "skewer" && !sim.wings.every((w) => w.onFork)) {
+				// Re-run tip-anchor immediately so this frame's render (post-ghost) stays in contact.
+				const a = sim.wingAim;
+				aimWing.rotation.set(a.pitch, a.yaw, a.roll);
+				this.fork.updateWorldMatrix(true, true);
+				const tip = this.tineWorld(1).add(this.tineWorld(-1)).multiplyScalar(.5);
+				const axis = new THREE.Vector3(1, 0, 0).transformDirection(this.fork.matrixWorld).normalize();
+				const th = Math.max(0, Math.min(1, sim.thrust));
+				const along = -0.02 * (1 - th) - 0.15 * th;
+				aimWing.position.copy(tip).addScaledVector(axis, along);
+				aimWing.position.x += a.x;
+				aimWing.position.y += a.y;
+				aimWing.position.z += a.z;
+				aimWing.updateWorldMatrix(true, true);
+				const tA = aimWing.getObjectByName("targetA");
+				const tB = aimWing.getObjectByName("targetB");
+				if (tA && tB) {
+					const bone = tA.getWorldPosition(new THREE.Vector3()).add(tB.getWorldPosition(new THREE.Vector3())).multiplyScalar(.5);
+					const tipNow = tip.clone().addScaledVector(axis, along);
+					const perp = bone.clone().sub(tipNow);
+					perp.addScaledVector(axis, -perp.dot(axis));
+					aimWing.position.sub(perp);
+				}
+			}
 		}
 		if (sim.phase === "skewer" && sim.thrust >= .72 && this.prevThrust < .72) {
 			this.spawnSkewerSparks();
+			this.flashPierceExit();
 			skewerPing();
 		}
 		this.prevThrust = sim.thrust;
 		this.tickSparks(dt);
+		this.tickPierceExit(dt);
 		this.fillLight.position.set(this._tines.x + .08, this._tines.y + .08, this._tines.z + .12);
 		this.fillLight.intensity = roast ? sim.wingCount === 2 ? 1.7 : 1.85 : 1.2;
 		const twoRoast = sim.wingCount === 2 && (sim.phase === "roast1" || sim.phase === "roast2" || sim.phase === "honey");
@@ -1253,7 +1553,12 @@ export class StallScene {
 			}
 		} else if (this.wingKey.visible) {
 			this.wingKey.position.set(this._tines.x + .02, this._tines.y + .1, this._tines.z + .16);
-			this.wingKey.intensity = sim.phase === "pick" ? .55 : sim.phase === "skewer" ? 1.65 : .95;
+			this.wingKey.intensity = sim.phase === "pick" ? 1.85 : sim.phase === "skewer" ? 1.65 : .95;
+			if (sim.phase === "pick") {
+				this.wingKey.position.set(0, 1.05, 1.05);
+				this.fillLight.intensity = 1.55;
+				this.fillLight.position.set(0, .9, 1.1);
+			}
 		}
 		const pos = this.coals.geometry.attributes.position;
 		const drift = sim.wind * .18;
@@ -1281,9 +1586,9 @@ export class StallScene {
 			for (const kind of ["marinated", "plain"] as const) {
 				const bag = this.shopBags[kind];
 				bag.visible = true;
-				bag.position.x = kind === "marinated" ? -.3 : .3;
-				bag.position.y = .2;
-				bag.position.z = -.06;
+				bag.position.x = kind === "marinated" ? -.34 : .34;
+				bag.position.y = .24;
+				bag.position.z = -.02;
 				bag.rotation.x = 0;
 				const pulse = quiet ? 0 : Math.sin(this.t * 2.2 + (kind === "marinated" ? 0 : 1.1)) * .018;
 				bag.scale.setScalar(1 + pulse);
@@ -1348,8 +1653,9 @@ export class StallScene {
 			this.camera.position.lerp(new THREE.Vector3(look.x + .05, 1.02, 1.15), .04);
 			this.camera.lookAt(look);
 		} else if (sim.phase === "pick" || sim.phase === "count") {
-			this.camera.position.set(j.x, .9 + bob * .4 + j.y, 1.22);
-			this._look.set(0, .68, .66);
+			// Pull back + up so both bags + board read as a stall counter (not bag-gap close-up).
+			this.camera.position.set(j.x * .12, 1.42 + bob * .2 + j.y, 2.15);
+			this._look.set(0, .52, .7);
 			this.camera.lookAt(this._look);
 		} else if (sim.phase === "skewer") {
 			this.camera.position.lerp(new THREE.Vector3(j.x, .98 + bob + j.y, 1.22), .12);
@@ -1371,8 +1677,9 @@ export class StallScene {
 				hero.visible = true;
 				const spin = Math.sin(this.t * 0.26) * 0.12;
 				hero.position.set(0.0, 0.56, 0.2);
-				hero.rotation.set(-0.42, 1.32 + spin, 0.06);
-				hero.scale.setScalar(2.85);
+				// Show cut-end bone rings + dual-lobe silhouette of 雞中翼.
+				hero.rotation.set(-0.28, 0.55 + spin, 0.18);
+				hero.scale.setScalar(3.05);
 				const mesh = hero.getObjectByName("meat");
 				if (mesh && mesh instanceof THREE.Mesh) {
 					this.paintWing(mesh, 0, 0, 0, 0, 0);
@@ -1528,8 +1835,22 @@ export class StallScene {
 			asBasic(p.material).opacity = quiet ? 0 : hot * .12 * life;
 		}
 	}
+	flashPierceExit() {
+		this.fork.updateWorldMatrix(true, true);
+		const mid = this.tineWorld(1).lerp(this.tineWorld(-1), .5);
+		const forward = new THREE.Vector3(1, 0, 0).transformDirection(this.fork.matrixWorld);
+		this.exitMark.position.copy(mid).addScaledVector(forward, .03);
+		this.exitLife = .4;
+		this.exitMark.visible = true;
+	}
+	tickPierceExit(dt: number) {
+		if (this.exitLife <= 0) return;
+		this.exitLife -= dt;
+		asBasic(this.exitMark.material).opacity = Math.max(0, this.exitLife / .4);
+		if (this.exitLife <= 0) this.exitMark.visible = false;
+	}
 	spawnSkewerSparks() {
-		const origin = this.fork.localToWorld(new THREE.Vector3(.72, 0, 0));
+		const origin = this.tineWorld(1).lerp(this.tineWorld(-1), .5);
 		for (let i = 0; i < 10; i++) {
 			const cone = new THREE.Mesh(new THREE.ConeGeometry(.012, .05, 5), new THREE.MeshBasicMaterial({
 				color: 16769162,
@@ -1601,6 +1922,68 @@ export class StallScene {
 				y: (-p.y * .5 + .5) * 100,
 				visible: on,
 			};
+		}
+		this.projectTargets(sim, show);
+		this.updateAimRays(sim, show);
+	}
+	projectTargets(sim: Sim, show: boolean) {
+		const wing = this.wings[0];
+		if (!show || !wing) {
+			this.targetScreen[0].visible = false;
+			this.targetScreen[1].visible = false;
+			return;
+		}
+		const names = ["targetA", "targetB"] as const;
+		for (let i = 0; i < 2; i++) {
+			const obj = wing.getObjectByName(names[i]);
+			if (!obj) {
+				this.targetScreen[i].visible = false;
+				continue;
+			}
+			const p = obj.getWorldPosition(this._aimTgt);
+			p.project(this.camera);
+			const on = p.z > -1 && p.z < 1 && Math.abs(p.x) < 1.4 && Math.abs(p.y) < 1.4;
+			this.targetScreen[i] = {
+				x: (p.x * .5 + .5) * 100,
+				y: (-p.y * .5 + .5) * 100,
+				visible: on,
+			};
+		}
+	}
+	updateAimRays(sim: Sim, show: boolean) {
+		const wing = this.wings[0];
+		if (!show || !wing || this.aimRays.length < 2) {
+			for (const line of this.aimRays) line.visible = false;
+			return;
+		}
+		const tA = wing.getObjectByName("targetA");
+		const tB = wing.getObjectByName("targetB");
+		if (!tA || !tB) {
+			for (const line of this.aimRays) line.visible = false;
+			return;
+		}
+		const a = tA.getWorldPosition(new THREE.Vector3());
+		const b = tB.getWorldPosition(new THREE.Vector3());
+		const tipA = this.tineWorld(1);
+		const tipB = this.tineWorld(-1);
+		const d1 = tipA.distanceTo(a) + tipB.distanceTo(b);
+		const d2 = tipA.distanceTo(b) + tipB.distanceTo(a);
+		const pairA = d2 < d1 ? b : a;
+		const pairB = d2 < d1 ? a : b;
+		const tips = [tipA, tipB];
+		const tgts = [pairA, pairB];
+		const hot = sim.skewerAim >= .62;
+		for (let i = 0; i < 2; i++) {
+			const line = this.aimRays[i];
+			const pos = line.geometry.getAttribute("position");
+			pos.setXYZ(0, tips[i].x, tips[i].y, tips[i].z);
+			pos.setXYZ(1, tgts[i].x, tgts[i].y, tgts[i].z);
+			pos.needsUpdate = true;
+			line.geometry.computeBoundingSphere();
+			line.visible = true;
+			const mat = line.material as THREE.LineBasicMaterial;
+			mat.color.setHex(hot ? 8257402 : 16769448);
+			mat.opacity = hot ? .95 : .72;
 		}
 	}
 	pickAt(clientX: number, clientY: number): { kind: "bag"; bag: BagKind } | null {
