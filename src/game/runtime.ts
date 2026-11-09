@@ -1,4 +1,4 @@
-import { TICK, fireAmbientC, SPIN, makeBagStock, type BagKind, type SkewerStyle, type WingId } from "./constants";
+import { TICK, WING_ARCHETYPES, fireAmbientC, SPIN, makeBagStock, type BagKind, type SkewerStyle, type WingId } from "./constants";
 import { attachInput, sampleInput, setInjectedKeys, impulseSpin, setSkewerMode, resetWingNudge, setThrustHold } from "./input";
 import { setSizzle, flareBoom, setAudioSuspended, steamPuff } from "./audio";
 import { punch, shake } from "./juice";
@@ -72,6 +72,8 @@ export interface HudSnap {
   picked: number;
   freeSpin: boolean;
   drawnName: string;
+  drawnGrams: number;
+  drawnNote: string;
   skewerAim: number;
 }
 
@@ -240,6 +242,7 @@ export class GameRuntime {
     const fireC = fireAmbientC(this.sim.distance);
     const left = (bag: BagKind) => this.sim.bagStock[bag].filter((x) => !x.taken).length;
     const freeSpin = Boolean(w?.onFork && w.skewerStyle === "parallel" && !w.cartilageHit);
+    const arch = w ? WING_ARCHETYPES.find((a) => a.id === w.id) : undefined;
     return {
       phase: this.sim.phase,
       distance: this.sim.distance,
@@ -311,6 +314,8 @@ export class GameRuntime {
       picked: this.sim.wings.length,
       freeSpin,
       drawnName: w?.name ?? "",
+      drawnGrams: w?.grams ?? 0,
+      drawnNote: arch?.note ?? "",
       skewerAim: this.sim.skewerAim,
     };
   }
@@ -326,17 +331,25 @@ export class GameRuntime {
     }
 
     const skewering = this.sim.phase === "skewer";
+    const frozen = input.holdFrozen;
     if (skewering) {
-      this.sim.wingAim.pitch = -1.05 + input.wingPitch + input.horizon.y * 0.28;
-      this.sim.wingAim.yaw = 0.38 + input.wingYaw + input.horizon.x * 0.36;
-      this.sim.wingAim.roll = 0.08;
-      this.sim.wingAim.x = input.wingX;
-      this.sim.wingAim.y = input.wingY;
-      this.sim.wingAim.z = input.wingZ;
+      if (frozen) {
+        // Keep last yaw/pitch/roll so 吉 hold + gyro/swipe jitter cannot twist the 雞中翼.
+        this.sim.wingAim.x = input.wingX;
+        this.sim.wingAim.y = input.wingY;
+        this.sim.wingAim.z = input.wingZ;
+      } else {
+        this.sim.wingAim.pitch = -1.05 + input.wingPitch + input.horizon.y * 0.28;
+        this.sim.wingAim.yaw = 0.38 + input.wingYaw + input.horizon.x * 0.36;
+        this.sim.wingAim.roll = 0.08;
+        this.sim.wingAim.x = input.wingX;
+        this.sim.wingAim.y = input.wingY;
+        this.sim.wingAim.z = input.wingZ;
+      }
     } else {
       this.sim.distance = this.sim.distance * 0.35 + input.distance * 0.65;
       this.sim.angle = this.sim.angle * 0.4 + input.angle * 0.6;
-      this.sim.forkSpin = input.spinRate;
+      this.sim.forkSpin = frozen ? 0 : input.spinRate;
       this.sim.plateAim = input.plateAim;
     }
 
@@ -579,11 +592,26 @@ export class GameRuntime {
     if (this.sim.phase === "roast1" || this.sim.phase === "roast2") {
       this.sim.timeInPhase = Math.max(this.sim.timeInPhase, 4);
     }
-    return this.tryAdvance();
+    // Debug / stuck-state escape. The roast HUD does not call this; it uses abandonPractice.
+    return this.commitAdvance();
   }
 
   tryAdvance() {
     if (!canAdvance(this.sim)) return false;
+    return this.commitAdvance();
+  }
+
+  /**
+   * Leave roast or honey on purpose, with the wing as it is.
+   * Does not invent cook time, glaze, or doneness.
+   */
+  abandonPractice() {
+    const phase = this.sim.phase;
+    if (phase !== "roast1" && phase !== "roast2" && phase !== "honey") return false;
+    return this.commitAdvance();
+  }
+
+  private commitAdvance() {
     const n = nextPhase(this.sim.phase);
     if (n === "score") {
       this.verdict = judge(this.sim);

@@ -10,6 +10,8 @@ export function GameCanvas({ runtime }: { runtime: GameRuntime | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const sightA = useRef<HTMLSpanElement>(null);
   const sightB = useRef<HTMLSpanElement>(null);
+  const tgtA = useRef<HTMLSpanElement>(null);
+  const tgtB = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -29,15 +31,31 @@ export function GameCanvas({ runtime }: { runtime: GameRuntime | null }) {
       last = t;
       scene.sync(runtime.sim, dt);
       const [a, b] = scene.tineScreen;
+      const [ta, tb] = scene.targetScreen;
+      const hot = runtime.sim.skewerAim >= 0.62;
       if (sightA.current) {
         sightA.current.style.opacity = a.visible ? "1" : "0";
         sightA.current.style.left = `${a.x}%`;
         sightA.current.style.top = `${a.y}%`;
+        sightA.current.classList.toggle("hot", a.visible && hot);
       }
       if (sightB.current) {
         sightB.current.style.opacity = b.visible ? "1" : "0";
         sightB.current.style.left = `${b.x}%`;
         sightB.current.style.top = `${b.y}%`;
+        sightB.current.classList.toggle("hot", b.visible && hot);
+      }
+      if (tgtA.current) {
+        tgtA.current.style.opacity = ta.visible ? "1" : "0";
+        tgtA.current.style.left = `${ta.x}%`;
+        tgtA.current.style.top = `${ta.y}%`;
+        tgtA.current.classList.toggle("hot", ta.visible && hot);
+      }
+      if (tgtB.current) {
+        tgtB.current.style.opacity = tb.visible ? "1" : "0";
+        tgtB.current.style.left = `${tb.x}%`;
+        tgtB.current.style.top = `${tb.y}%`;
+        tgtB.current.classList.toggle("hot", tb.visible && hot);
       }
       raf = requestAnimationFrame(loop);
     };
@@ -116,6 +134,8 @@ export function GameCanvas({ runtime }: { runtime: GameRuntime | null }) {
       />
       <span ref={sightA} className="tine-sight" aria-hidden="true" />
       <span ref={sightB} className="tine-sight" aria-hidden="true" />
+      <span ref={tgtA} className="target-sight" aria-hidden="true" />
+      <span ref={tgtB} className="target-sight" aria-hidden="true" />
     </>
   );
 }

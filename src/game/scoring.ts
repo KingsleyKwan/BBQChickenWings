@@ -177,7 +177,7 @@ export function judge(sim: Sim): Verdict {
   if (sim.earlyFidget > 0.7) {
     comments.push("開頭轉得太勤，皮未定色就反面，金黃出得慢。");
   } else if (avgChar >= 0.18 && sim.earlyFidget < 0.4) {
-    comments.push("開頭有等皮定色，之後先轉，Maillard 金黃出得穩。");
+    comments.push("開頭有等皮定色，之後先轉，金黃出得穩。");
   }
 
   const avgHang = sim.wings.reduce((s, w) => s + w.hangDown, 0) / Math.max(1, sim.wings.length);
@@ -216,8 +216,8 @@ export function judge(sim: Sim): Verdict {
     comments.push(`今日場地挑戰：${side}，火位同平時唔同。`);
   }
 
-  if (avgHeat < 0.5 && avgChar > 0.5) tips.push("貼火只會燶皮。抬高返甜區，肥翼要多留幾分鐘等肉心跟上。");
-  else if (avgHeat < 0.5) tips.push("第一次過火可以再停甜區耐啲。大隻翼肉厚，急唔來。");
+  if (avgHeat < 0.5 && avgChar > 0.5) tips.push("貼火只會燶皮。抬高返適中火位（唔貼炭、唔甩太遠），肥翼要多留幾分鐘等肉心跟上。");
+  else if (avgHeat < 0.5) tips.push("第一次過火可以再停適中火位（唔貼炭、唔甩太遠）耐啲。大隻翼肉厚，急唔來。");
   if (avgChar > 0.5) tips.push("距離炭爐太近會飆焦；蜜糖塗厚咗收汁時更易燶。");
   if (avgEven < 0.45) tips.push("弱火靠近，每幾十秒左右劃螢幕轉叉，將淺色嗰面轉落火。吉得準先轉得動。");
   if (free) {
@@ -232,7 +232,7 @@ export function judge(sim: Sim): Verdict {
   if (avgGlazeAge < 1.6 && avgHoney > 0.35) tips.push("搽完蜜糖每邊再收十秒至兩分鐘，九成熟先搽，最後半分鐘唔好再搽。");
   if (sim.wingCount === 2) tips.push("燒兩隻時靠轉動同微側角度，補內側嗰隻。單尖只適合一隻。");
   if (torn > 0.2) tips.push("上碟同夾出嚟用輕力，唔好大力一抽。");
-  if (tips.length === 0) tips.push(`保持甜區距離，左右劃螢幕轉叉，${glazeName}薄薄一層，肥翼就耐燒一陣。`);
+  if (tips.length === 0) tips.push(`保持適中火位（唔貼炭、唔甩太遠），左右劃螢幕轉叉，${glazeName}薄薄一層，肥翼就耐燒一陣。`);
 
   return {
     title: overall >= 84 && title === "外脆內嫩" ? "今晚呢碟得" : title,
